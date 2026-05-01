@@ -1,46 +1,102 @@
 """
 Gazebo-backed Gymnasium environment for RL training.
-Extends NavEnv to drive real robot in sim via ROS2.
+
+Observation space (696 dims):
+  [0:2]    pixel_center_norm — YOLO target bbox center, normalized [-1,1]
+  [2]      semantic_match    — CLIP cosine similarity to command
+  [3]      target_detected   — 1.0 when YOLO finds a match, 0.0 otherwise
+  [4:184]  lidar_compressed  — 180 min-pooled LIDAR readings, range-normalized
+  [184:]   text_embedding    — CLIP text embed of command (512 dims)
+
+Action space: [linear_vel ∈ [-1,1], angular_vel ∈ [-π,π]]
 """
 
 import numpy as np
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import LaserScan, Image
 from nav_msgs.msg import Odometry
+from cv_bridge import CvBridge
+import gymnasium as gym
+from gymnasium import spaces
 import threading
 import time
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Optional
 
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from langnav_rl.nav_env import NavEnv
+from langnav_vision import VisionObsBuilder, OBS_DIM
 from langnav_sim.worlds.world_generator import WorldGenerator
 
+# Default command when none is set — agent will not detect anything useful
+_FALLBACK_COMMAND = "navigate to the target object"
 
-class GazeboEnv(NavEnv):
+
+class GazeboEnv(gym.Env):
     """
-    NavEnv backed by live Gazebo simulation.
-    Uses ROS2 topics for state + action execution.
-    Overrides reset() to randomize world via WorldGenerator.
+    Full-stack RL environment: Gazebo sim + ROS2 + YOLO/CLIP vision pipeline.
+
+    Usage:
+        env = GazeboEnv(n_objects=5)
+        obs, info = env.reset(command="go to the red box")
+        obs, reward, terminated, truncated, info = env.step(action)
     """
 
-    def __init__(self, n_objects: int = 5, **kwargs):
-        super().__init__(**kwargs)
+    metadata = {"render_modes": ["human"]}
 
+    def __init__(
+        self,
+        n_objects: int = 5,
+        max_episode_steps: int = 500,
+        goal_radius: float = 0.5,
+        collision_threshold: float = 0.15,
+    ):
+        """
+        Args:
+            n_objects: Objects to spawn per episode
+            max_episode_steps: Episode length limit
+            goal_radius: Distance (meters) that counts as goal reached
+            collision_threshold: LIDAR reading (meters) that triggers collision
+        """
+        super().__init__()
         self.n_objects = n_objects
-        self._ros_initialized = False
-        self._lock = threading.Lock()
+        self.max_episode_steps = max_episode_steps
+        self.goal_radius = goal_radius
+        self.collision_threshold = collision_threshold
 
-        # Latest sensor data
-        self._odom = None
-        self._scan = None
-        self._world_objects = []
+        # Observation + action spaces
+        self.observation_space = spaces.Box(
+            low=-np.inf, high=np.inf, shape=(OBS_DIM,), dtype=np.float32
+        )
+        self.action_space = spaces.Box(
+            low=np.array([-1.0, -np.pi], dtype=np.float32),
+            high=np.array([1.0,  np.pi], dtype=np.float32),
+        )
+
+        # Runtime state
+        self.robot_pos   = np.zeros(2, dtype=np.float32)
+        self.target_pos  = np.zeros(2, dtype=np.float32)
+        self.step_count  = 0
+        self._command    = _FALLBACK_COMMAND
+        self._world_objects: list = []
+
+        # Thread-safe sensor buffers
+        self._lock   = threading.Lock()
+        self._odom   = None
+        self._scan   = None
+        self._image  = None
+
+        # Lazy-initialized
+        self._ros_initialized = False
+        self._bridge = CvBridge()
+        self._vis_builder: Optional[VisionObsBuilder] = None
+
+    # ── ROS2 init ───────────────────────────────────────────────────────────
 
     def _init_ros(self):
-        """Lazy ROS2 init (call once before first reset)."""
+        """Initialize ROS2 node and vision pipeline (called once on first reset)."""
         if self._ros_initialized:
             return
 
@@ -48,115 +104,208 @@ class GazeboEnv(NavEnv):
         self._node = Node("gazebo_env")
         self._world_gen = WorldGenerator()
 
+        # Vision pipeline
+        self._vis_builder = VisionObsBuilder(image_w=640, image_h=480)
+
         # Publishers
         self._cmd_pub = self._node.create_publisher(Twist, "/cmd_vel", 10)
 
-        # Subscribers
-        self._odom_sub = self._node.create_subscription(
-            Odometry, "/odom", self._on_odom, 10
-        )
-        self._scan_sub = self._node.create_subscription(
-            LaserScan, "/scan", self._on_scan, 10
-        )
+        # Subscribers — use depth-1 QoS to always get latest reading
+        qos = rclpy.qos.QoSProfile(depth=1)
+        self._node.create_subscription(Odometry,   "/odom",       self._on_odom,  qos)
+        self._node.create_subscription(LaserScan,  "/scan",       self._on_scan,  qos)
+        self._node.create_subscription(Image,      "/camera/rgb", self._on_image, qos)
 
-        # Spin in background thread
-        self._spin_thread = threading.Thread(
-            target=rclpy.spin, args=(self._node,), daemon=True
-        )
-        self._spin_thread.start()
+        # Background spin thread
+        threading.Thread(target=rclpy.spin, args=(self._node,), daemon=True).start()
 
         self._ros_initialized = True
 
-    def reset(self, seed: int = None) -> Tuple[np.ndarray, Dict]:
-        """Reset episode: randomize world, move robot to origin, sample target."""
-        self._init_ros()
-        super().reset(seed=seed)
+    # ── Gym API ─────────────────────────────────────────────────────────────
 
-        # Spawn random objects in Gazebo
+    def reset(
+        self,
+        *,
+        seed: int = None,
+        options: dict = None,
+        command: str = None,
+    ) -> Tuple[np.ndarray, Dict]:
+        """
+        Reset episode.
+
+        Args:
+            seed: RNG seed
+            options: Unused (Gymnasium compatibility)
+            command: Natural language navigation target (e.g., "go to the red box").
+                     Reuses previous command if None.
+
+        Returns:
+            (observation, info)
+        """
+        self._init_ros()
+
+        if seed is not None:
+            np.random.seed(seed)
+
+        if command is not None:
+            self._command = command
+
+        self.step_count = 0
+        self.robot_pos  = np.zeros(2, dtype=np.float32)
+
+        # Randomize Gazebo world
         self._world_objects = self._world_gen.randomize(n_objects=self.n_objects)
 
-        # Pick random object as navigation target
+        # Pick first object as target (command selects semantically at runtime)
         if self._world_objects:
-            target = self._world_gen.np_random.choice(self._world_objects)
-            pos = target["position"]
+            chosen = self._world_objects[0]
+            pos = chosen["position"]
             self.target_pos = np.array([pos[0], pos[1]], dtype=np.float32)
-            self.target_id = hash(target["spec"]) % 80
 
-        # Wait for first odometry
-        timeout = 5.0
-        start = time.time()
-        while self._odom is None and time.time() - start < timeout:
-            time.sleep(0.05)
+        # Wait for all sensors to have at least one reading
+        self._wait_for_sensors(timeout=5.0)
 
-        return self._get_obs(), {"objects": self._world_objects}
+        obs, vis_info = self._build_obs()
+        info = {**vis_info, "objects": self._world_objects, "command": self._command}
+        return obs, info
 
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict]:
-        """Execute velocity action, read new state from Gazebo."""
-        linear_vel, angular_vel = float(action[0]), float(action[1])
+        """
+        Execute velocity command, advance simulation one step, return state.
 
-        # Publish velocity command
-        cmd = Twist()
-        cmd.linear.x = float(np.clip(linear_vel, -1.0, 1.0))
-        cmd.angular.z = float(np.clip(angular_vel, -np.pi, np.pi))
-        self._cmd_pub.publish(cmd)
+        Args:
+            action: [linear_vel, angular_vel]
 
-        # Wait one control step
-        time.sleep(0.1)
+        Returns:
+            (obs, reward, terminated, truncated, info)
+        """
+        self._publish_cmd(action)
+        time.sleep(0.1)  # Wait one control tick (10 Hz)
 
-        # Update robot pos from odometry
-        if self._odom is not None:
-            with self._lock:
-                pos = self._odom.pose.pose.position
-                self.robot_pos = np.array([pos.x, pos.y], dtype=np.float32)
+        # Update robot position from odometry
+        with self._lock:
+            if self._odom is not None:
+                p = self._odom.pose.pose.position
+                self.robot_pos = np.array([p.x, p.y], dtype=np.float32)
 
         self.step_count += 1
 
+        # Build observation (runs YOLO+CLIP on latest camera frame)
+        obs, vis_info = self._build_obs()
+
+        # Reward shaping
         distance = float(np.linalg.norm(self.robot_pos - self.target_pos))
-        reward = -distance
-
-        # Goal condition
-        terminated = distance < 0.5
-        if terminated:
-            reward += 10.0
-            self._stop_robot()
-
-        # Collision via LIDAR: any reading < 0.15 m
-        if self._scan is not None:
-            min_range = float(np.min(self._scan.ranges))
-            if min_range < 0.15:
-                reward -= 2.0
-                terminated = True
-                self._stop_robot()
+        reward, terminated = self._compute_reward(distance, vis_info)
 
         truncated = self.step_count >= self.max_episode_steps
 
-        obs = self._get_obs()
         info = {
-            "distance": distance,
-            "success": terminated and distance < 0.5,
-            "min_range": float(np.min(self._scan.ranges)) if self._scan else -1.0,
+            **vis_info,
+            "distance":  distance,
+            "success":   terminated and distance < self.goal_radius,
+            "step":      self.step_count,
         }
 
         return obs, reward, terminated, truncated, info
 
+    def close(self):
+        if self._ros_initialized:
+            self._stop_robot()
+            rclpy.shutdown()
+
+    # ── Internal helpers ─────────────────────────────────────────────────────
+
+    def _build_obs(self) -> Tuple[np.ndarray, dict]:
+        """Snapshot sensors, run vision pipeline, return (obs_vector, vis_info)."""
+        with self._lock:
+            image = self._image.copy() if self._image is not None else None
+            scan  = np.array(self._scan.ranges, dtype=np.float32) if self._scan else None
+
+        if image is None:
+            # No camera frame yet — return zero obs
+            return np.zeros(OBS_DIM, dtype=np.float32), {"detected": False, "semantic_match": 0.0}
+
+        obs, vis_info = self._vis_builder.build(image, self._command, scan)
+        return obs, vis_info
+
+    def _compute_reward(self, distance: float, vis_info: dict) -> Tuple[float, bool]:
+        """
+        Reward function:
+          - Dense: negative distance (agent learns to get closer)
+          - Semantic bonus: scales with CLIP match score
+          - Goal bonus: +10 on arrival
+          - Collision penalty: -2 on proximity trigger
+          - Direction bonus: pixel alignment to target center
+        """
+        reward = -distance * 0.1  # Scale down to keep reward in [-1, 1] range
+        terminated = False
+
+        # Semantic alignment bonus — encourage facing the right object
+        sem_match = float(vis_info.get("semantic_match", 0.0))
+        reward += sem_match * 0.2
+
+        # Pixel centering bonus — encourage keeping target in frame center
+        if vis_info.get("detected"):
+            px = float(vis_info.get("pixel_x", 0.0)) if "pixel_x" in vis_info else 0.0
+            center_bonus = max(0.0, 0.1 - abs(px) * 0.1)
+            reward += center_bonus
+
+        # Goal reached
+        if distance < self.goal_radius:
+            reward += 10.0
+            terminated = True
+            self._stop_robot()
+            return reward, terminated
+
+        # Collision via LIDAR
+        with self._lock:
+            scan = self._scan
+        if scan is not None:
+            min_range = float(np.min(scan.ranges))
+            if min_range < self.collision_threshold:
+                reward -= 2.0
+                terminated = True
+                self._stop_robot()
+
+        return reward, terminated
+
+    def _publish_cmd(self, action: np.ndarray):
+        cmd = Twist()
+        cmd.linear.x  = float(np.clip(action[0], -1.0, 1.0))
+        cmd.angular.z = float(np.clip(action[1], -np.pi, np.pi))
+        self._cmd_pub.publish(cmd)
+
     def _stop_robot(self):
-        """Publish zero velocity."""
         self._cmd_pub.publish(Twist())
+
+    def _wait_for_sensors(self, timeout: float = 5.0):
+        """Block until odom + scan + image all have at least one reading."""
+        start = time.time()
+        while time.time() - start < timeout:
+            with self._lock:
+                ready = all([self._odom, self._scan, self._image is not None])
+            if ready:
+                return
+            time.sleep(0.05)
+
+    # ── ROS2 callbacks ───────────────────────────────────────────────────────
 
     def _on_odom(self, msg: Odometry):
         with self._lock:
             self._odom = msg
 
     def _on_scan(self, msg: LaserScan):
+        ranges = np.asarray(msg.ranges, dtype=np.float32)
+        ranges = np.where(np.isfinite(ranges), ranges, msg.range_max)
+        ranges = np.clip(ranges, 0.0, msg.range_max)
         with self._lock:
-            # Replace inf readings with max range
-            ranges = np.array(msg.ranges, dtype=np.float32)
-            ranges = np.where(np.isinf(ranges), msg.range_max, ranges)
-            msg.ranges = ranges.tolist()
             self._scan = msg
+            self._scan.ranges = ranges.tolist()
 
-    def close(self):
-        """Shutdown ROS2."""
-        if self._ros_initialized:
-            self._stop_robot()
-            rclpy.shutdown()
+    def _on_image(self, msg: Image):
+        try:
+            frame = self._bridge.imgmsg_to_cv2(msg, desired_encoding="rgb8")
+            with self._lock:
+                self._image = frame
+        except Exception:
+            pass

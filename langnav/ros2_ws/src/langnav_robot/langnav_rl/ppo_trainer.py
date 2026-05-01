@@ -1,7 +1,8 @@
 """PPO training loop for navigation policy."""
 
 import os
-from typing import Dict, Any
+from typing import Dict, Any, Type
+import gymnasium as gym
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback
 import wandb
@@ -14,6 +15,7 @@ class PPOTrainer:
 
     def __init__(
         self,
+        env_class: Type[gym.Env] = NavEnv,
         env_kwargs: Dict[str, Any] = None,
         policy: str = "MlpPolicy",
         learning_rate: float = 3e-4,
@@ -32,6 +34,7 @@ class PPOTrainer:
             batch_size: Training batch size
             use_wandb: Enable W&B logging
         """
+        self.env_class = env_class
         self.env_kwargs = env_kwargs or {}
         self.policy = policy
         self.lr = learning_rate
@@ -39,7 +42,7 @@ class PPOTrainer:
         self.batch_size = batch_size
         self.use_wandb = use_wandb
 
-        self.env = NavEnv(**self.env_kwargs)
+        self.env = env_class(**self.env_kwargs)
         self.model = None
 
     def train(

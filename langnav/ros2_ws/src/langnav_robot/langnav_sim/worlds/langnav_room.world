@@ -1,0 +1,136 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <world name="langnav_room">
+
+    <!-- Physics -->
+    <physics type="ode">
+      <real_time_update_rate>1000.0</real_time_update_rate>
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+
+    <!-- Lighting -->
+    <include>
+      <uri>model://sun</uri>
+    </include>
+
+    <!-- Ground plane -->
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+
+    <!-- Room walls (10m x 10m) -->
+    <model name="wall_north">
+      <static>true</static>
+      <pose>0 5 1 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>10 0.1 2</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>10 0.1 2</size></box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_south">
+      <static>true</static>
+      <pose>0 -5 1 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>10 0.1 2</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>10 0.1 2</size></box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_east">
+      <static>true</static>
+      <pose>5 0 1 0 0 1.5708</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>10 0.1 2</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>10 0.1 2</size></box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_west">
+      <static>true</static>
+      <pose>-5 0 1 0 0 1.5708</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>10 0.1 2</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>10 0.1 2</size></box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Default objects (spawner overrides these at runtime) -->
+    <model name="red_box_0">
+      <pose>2.0 1.5 0.25 0 0 0</pose>
+      <link name="link">
+        <inertial>
+          <mass>1.0</mass>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <box><size>0.5 0.5 0.5</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.5 0.5 0.5</size></box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.1 0.1 1</ambient>
+            <diffuse>0.8 0.1 0.1 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- GUI -->
+    <gui fullscreen="0">
+      <camera name="user_camera">
+        <pose>-8 0 5 0 0.5 0</pose>
+        <view_controller>orbit</view_controller>
+      </camera>
+    </gui>
+
+  </world>
+</sdf>

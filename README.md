@@ -1,6 +1,6 @@
 # LangNav — Natural Language Robot Navigation
 
-[![CI](https://github.com/YOUR_USERNAME/langnav/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/langnav/actions/workflows/ci.yml)
+[![CI](https://github.com/shahriarrashid54/langnav/actions/workflows/ci.yml/badge.svg)](https://github.com/shahriarrashid54/langnav/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11-blue?logo=python)](https://www.python.org)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.1+-ee4c2c?logo=pytorch)](https://pytorch.org)
 [![ROS2](https://img.shields.io/badge/ROS2-Humble-blue?logo=ros)](https://docs.ros.org/en/humble)
@@ -123,7 +123,7 @@ Potential-based shaping guarantees the optimal policy is unchanged versus the sp
 ### Install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/langnav.git
+git clone https://github.com/shahriarrashid54/langnav.git
 cd langnav
 pip install -r requirements.txt
 ```
@@ -242,9 +242,9 @@ Tests run headless (no GPU, no ROS2, no CLIP download) — suitable for CI.
 ```bibtex
 @misc{langnav2025,
   title   = {LangNav: Natural Language Robot Navigation with VLM and RL},
-  author  = {YOUR_NAME},
+  author  = {Shahriar Rashid},
   year    = {2025},
-  url     = {https://github.com/YOUR_USERNAME/langnav}
+  url     = {https://github.com/shahriarrashid54/langnav}
 }
 ```
 

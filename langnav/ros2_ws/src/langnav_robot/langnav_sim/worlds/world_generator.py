@@ -3,15 +3,14 @@ Randomize Gazebo world at episode start.
 Spawns/deletes objects via ROS2 service calls to gazebo_ros.
 """
 
-import rclpy
-from rclpy.node import Node
-from gazebo_msgs.srv import SpawnEntity, DeleteEntity
-from geometry_msgs.msg import Pose
 import random
 import math
 from typing import List, Tuple
 from dataclasses import dataclass
 import xml.etree.ElementTree as ET
+
+# ROS2 imports are lazy — loaded only when WorldGenerator.__init__ is called
+# so this module is importable in non-ROS2 environments (tests, CI).
 
 
 # Object palette: name, RGBA color, size (x, y, z)
@@ -33,16 +32,24 @@ OBJECT_PALETTE = [
 ]
 
 
-class WorldGenerator(Node):
+class WorldGenerator:
     """Spawn/delete objects in Gazebo world to randomize training scenes."""
 
     def __init__(self):
-        super().__init__("world_generator")
+        # Lazy ROS2 imports — only needed when running inside Gazebo
+        import rclpy
+        from rclpy.node import Node
+        from gazebo_msgs.srv import SpawnEntity, DeleteEntity
 
-        self.spawn_client = self.create_client(SpawnEntity, "/spawn_entity")
-        self.delete_client = self.create_client(DeleteEntity, "/delete_entity")
+        if not rclpy.ok():
+            rclpy.init()
 
+        self._node = Node("world_generator")
+        self.spawn_client  = self._node.create_client(SpawnEntity,  "/spawn_entity")
+        self.delete_client = self._node.create_client(DeleteEntity, "/delete_entity")
         self.spawned_objects: List[str] = []
+        self._SpawnEntity  = SpawnEntity
+        self._DeleteEntity = DeleteEntity
 
     def randomize(
         self,
@@ -78,21 +85,22 @@ class WorldGenerator(Node):
                 "color": spec.color,
                 "position": pos,
             })
-            self.get_logger().info(f"Spawned {obj_name} at {pos}")
+            self._node.get_logger().info(f"Spawned {obj_name} at {pos}")
 
         return spawned
 
     def _delete_all(self):
         """Delete all previously spawned objects."""
         for name in self.spawned_objects:
-            req = DeleteEntity.Request()
+            req = self._DeleteEntity.Request()
             req.name = name
             self.delete_client.call(req)
         self.spawned_objects.clear()
 
     def _spawn_object(self, name: str, sdf: str, pos: Tuple[float, float]):
         """Call Gazebo spawn service."""
-        req = SpawnEntity.Request()
+        from geometry_msgs.msg import Pose
+        req = self._SpawnEntity.Request()
         req.name = name
         req.xml = sdf
         req.initial_pose = Pose()

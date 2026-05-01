@@ -12,12 +12,6 @@ Action space: [linear_vel ∈ [-1,1], angular_vel ∈ [-π,π]]
 """
 
 import numpy as np
-import rclpy
-from rclpy.node import Node
-from geometry_msgs.msg import Twist
-from sensor_msgs.msg import LaserScan, Image
-from nav_msgs.msg import Odometry
-from cv_bridge import CvBridge
 import gymnasium as gym
 from gymnasium import spaces
 import threading
@@ -27,8 +21,19 @@ from typing import Tuple, Dict, Optional
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from langnav_vision import VisionObsBuilder, OBS_DIM
 from langnav_sim.worlds.world_generator import WorldGenerator
+
+# ROS2 / CV imports are lazy — loaded inside _init_ros() so this module
+# can be imported in non-ROS2 environments without raising ModuleNotFoundError.
+_rclpy = None
+_Node = None
+_Twist = None
+_LaserScan = None
+_Image = None
+_Odometry = None
+_CvBridge = None
+_VisionObsBuilder = None
+_OBS_DIM = None
 
 # Default command when none is set — agent will not detect anything useful
 _FALLBACK_COMMAND = "navigate to the target object"
@@ -66,9 +71,10 @@ class GazeboEnv(gym.Env):
         self.goal_radius = goal_radius
         self.collision_threshold = collision_threshold
 
-        # Observation + action spaces
+        # Observation + action spaces (OBS_DIM resolved lazily on first reset)
+        _obs_dim = 696  # matches VisionObsBuilder.OBS_DIM
         self.observation_space = spaces.Box(
-            low=-np.inf, high=np.inf, shape=(OBS_DIM,), dtype=np.float32
+            low=-np.inf, high=np.inf, shape=(_obs_dim,), dtype=np.float32
         )
         self.action_space = spaces.Box(
             low=np.array([-1.0, -np.pi], dtype=np.float32),
@@ -100,25 +106,33 @@ class GazeboEnv(gym.Env):
         if self._ros_initialized:
             return
 
-        rclpy.init()
-        self._node = Node("gazebo_env")
+        # Lazy ROS2 imports — fail here (not at module load) if rclpy missing
+        import rclpy as _rclpy_mod
+        from rclpy.node import Node as _NodeCls
+        from geometry_msgs.msg import Twist as _TwistCls
+        from sensor_msgs.msg import LaserScan as _LaserScanCls, Image as _ImageCls
+        from nav_msgs.msg import Odometry as _OdometryCls
+        from cv_bridge import CvBridge as _CvBridgeCls
+        from langnav_vision import VisionObsBuilder as _VisionObsBuilderCls
+
+        self._bridge = _CvBridgeCls()
+
+        _rclpy_mod.init()
+        self._node = _NodeCls("gazebo_env")
         self._world_gen = WorldGenerator()
+        self._vis_builder = _VisionObsBuilderCls(image_w=640, image_h=480)
 
-        # Vision pipeline
-        self._vis_builder = VisionObsBuilder(image_w=640, image_h=480)
+        self._cmd_pub = self._node.create_publisher(_TwistCls, "/cmd_vel", 10)
 
-        # Publishers
-        self._cmd_pub = self._node.create_publisher(Twist, "/cmd_vel", 10)
+        qos = _rclpy_mod.qos.QoSProfile(depth=1)
+        self._node.create_subscription(_OdometryCls, "/odom",       self._on_odom,  qos)
+        self._node.create_subscription(_LaserScanCls, "/scan",      self._on_scan,  qos)
+        self._node.create_subscription(_ImageCls, "/camera/rgb",    self._on_image, qos)
 
-        # Subscribers — use depth-1 QoS to always get latest reading
-        qos = rclpy.qos.QoSProfile(depth=1)
-        self._node.create_subscription(Odometry,   "/odom",       self._on_odom,  qos)
-        self._node.create_subscription(LaserScan,  "/scan",       self._on_scan,  qos)
-        self._node.create_subscription(Image,      "/camera/rgb", self._on_image, qos)
+        threading.Thread(target=_rclpy_mod.spin, args=(self._node,), daemon=True).start()
 
-        # Background spin thread
-        threading.Thread(target=rclpy.spin, args=(self._node,), daemon=True).start()
-
+        self._rclpy = _rclpy_mod
+        self._Twist = _TwistCls
         self._ros_initialized = True
 
     # ── Gym API ─────────────────────────────────────────────────────────────
@@ -211,7 +225,7 @@ class GazeboEnv(gym.Env):
     def close(self):
         if self._ros_initialized:
             self._stop_robot()
-            rclpy.shutdown()
+            self._rclpy.shutdown()
 
     # ── Internal helpers ─────────────────────────────────────────────────────
 
@@ -270,13 +284,13 @@ class GazeboEnv(gym.Env):
         return reward, terminated
 
     def _publish_cmd(self, action: np.ndarray):
-        cmd = Twist()
+        cmd = self._Twist()
         cmd.linear.x  = float(np.clip(action[0], -1.0, 1.0))
         cmd.angular.z = float(np.clip(action[1], -np.pi, np.pi))
         self._cmd_pub.publish(cmd)
 
     def _stop_robot(self):
-        self._cmd_pub.publish(Twist())
+        self._cmd_pub.publish(self._Twist())
 
     def _wait_for_sensors(self, timeout: float = 5.0):
         """Block until odom + scan + image all have at least one reading."""
@@ -290,11 +304,11 @@ class GazeboEnv(gym.Env):
 
     # ── ROS2 callbacks ───────────────────────────────────────────────────────
 
-    def _on_odom(self, msg: Odometry):
+    def _on_odom(self, msg):
         with self._lock:
             self._odom = msg
 
-    def _on_scan(self, msg: LaserScan):
+    def _on_scan(self, msg):
         ranges = np.asarray(msg.ranges, dtype=np.float32)
         ranges = np.where(np.isfinite(ranges), ranges, msg.range_max)
         ranges = np.clip(ranges, 0.0, msg.range_max)
@@ -302,7 +316,7 @@ class GazeboEnv(gym.Env):
             self._scan = msg
             self._scan.ranges = ranges.tolist()
 
-    def _on_image(self, msg: Image):
+    def _on_image(self, msg):
         try:
             frame = self._bridge.imgmsg_to_cv2(msg, desired_encoding="rgb8")
             with self._lock:

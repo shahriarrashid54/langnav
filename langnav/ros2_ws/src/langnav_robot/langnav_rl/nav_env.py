@@ -124,7 +124,7 @@ class NavEnv(gym.Env):
             "episode_length": self.step_count,
         }
 
-        return self._get_obs(), reward, terminated, truncated, info
+        return self._get_obs(), float(reward), terminated, truncated, info
 
     # ── Observation ─────────────────────────────────────────────────────────
 

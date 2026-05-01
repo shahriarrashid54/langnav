@@ -1,0 +1,32 @@
+version: "3.8"
+
+services:
+  langnav:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: langnav_dev
+    volumes:
+      - ..:/langnav
+    environment:
+      - DISPLAY=${DISPLAY}
+    networks:
+      - langnav_net
+    stdin_open: true
+    tty: true
+
+  gazebo:
+    image: gazebo:fortress
+    container_name: gazebo_sim
+    environment:
+      - DISPLAY=${DISPLAY}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    networks:
+      - langnav_net
+    ports:
+      - "11345:11345"
+
+networks:
+  langnav_net:
+    driver: bridge

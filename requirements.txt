@@ -1,0 +1,32 @@
+# Core ML/DL
+torch>=2.1.0
+torchvision>=0.16.0
+ultralytics>=8.0.0
+
+# Vision & Language
+clip-by-openai>=0.4.0
+transformers>=4.35.0
+PIL>=9.0.0
+
+# RL Training
+stable-baselines3>=2.2.0
+gymnasium>=0.29.0
+
+# ROS2 (install via apt on Ubuntu)
+# ros2-humble-desktop
+
+# Simulation
+# gazebo (install via apt)
+
+# Utils
+numpy>=1.24.0
+opencv-python>=4.8.0
+pyyaml>=6.0
+wandb>=0.16.0
+tqdm>=4.66.0
+
+# Development
+black>=23.0.0
+flake8>=6.1.0
+pytest>=7.4.0
+pytest-cov>=4.1.0

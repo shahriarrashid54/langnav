@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install CPU-only dependencies
+        run: |
+          pip install --upgrade pip
+          # Install torch CPU-only (faster CI, avoids CUDA download)
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install stable-baselines3>=2.2.0 gymnasium>=0.29.0
+          pip install numpy opencv-python-headless pyyaml tqdm
+          pip install matplotlib imageio Pillow
+          pip install pytest pytest-cov
+
+      - name: Install project (no ROS2 deps)
+        run: |
+          pip install -e langnav/ros2_ws/src/langnav_robot/ --no-deps
+
+      - name: Run unit tests (no GPU, no ROS2, no CLIP)
+        env:
+          LANGNAV_CI: "1"
+        run: |
+          pytest tests/test_nav_env.py tests/test_sim.py tests/test_renderer.py \
+            -v --tb=short --cov=langnav --cov-report=term-missing
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          fail_ci_if_error: false

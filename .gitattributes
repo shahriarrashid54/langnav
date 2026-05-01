@@ -1,0 +1,12 @@
+# Force LF line endings in repo regardless of OS
+* text=auto eol=lf
+
+# Binary files — never touch line endings
+*.png binary
+*.jpg binary
+*.gif binary
+*.mp4 binary
+*.zip binary
+*.pth binary
+*.onnx binary
+*.pdf binary

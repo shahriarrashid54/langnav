@@ -16,7 +16,9 @@
       "PowerShell(Start-Process \"D:\\\\MUN\\\\Workspace\\\\Project\\\\demo\\\\demo_compare.gif\")",
       "PowerShell(Start-Process \"D:\\\\MUN\\\\Workspace\\\\Project\\\\demo\\\\demo_best.gif\")",
       "WebFetch(domain:github.com)",
-      "Bash(python -m pytest tests/test_nav_env.py tests/test_sim.py tests/test_renderer.py -v --tb=short)"
+      "Bash(python -m pytest tests/test_nav_env.py tests/test_sim.py tests/test_renderer.py -v --tb=short)",
+      "Bash(rm \"=0.29.0\" \"=2.2.0\")",
+      "Bash(git commit -m 'Remove junk files created by malformed pip command *)"
     ]
   }
 }

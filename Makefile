@@ -46,3 +46,17 @@ docker-build:
 
 docker-run:
 	docker-compose -f docker/docker-compose.yml up -d
+
+sim-build:
+	docker-compose -f docker/docker-compose.sim.yml build
+
+sim-run:
+	docker-compose -f docker/docker-compose.sim.yml up
+
+sim-gazebo:
+	docker exec -it langnav_sim bash -c \
+	  "source /opt/ros/humble/setup.bash && \
+	   ros2 launch langnav_sim gazebo.launch.py rviz:=true"
+
+sim-shell:
+	docker exec -it langnav_sim bash

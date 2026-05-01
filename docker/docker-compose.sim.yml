@@ -1,0 +1,24 @@
+version: "3.8"
+
+services:
+  langnav-sim:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.sim
+    container_name: langnav_sim
+    ports:
+      - "8080:8080"    # noVNC → browser
+      - "5900:5900"    # raw VNC (optional, for VNC clients)
+    volumes:
+      - ..:/langnav    # live code mount — edits reflect instantly
+      - checkpoints:/langnav/checkpoints
+    environment:
+      - DISPLAY=:1
+      - ROS_DOMAIN_ID=0
+    stdin_open: true
+    tty: true
+    # shared memory needed for Gazebo rendering
+    shm_size: "256mb"
+
+volumes:
+  checkpoints:

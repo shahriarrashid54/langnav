@@ -101,14 +101,14 @@ Potential-based shaping guarantees the optimal policy is unchanged versus the sp
 
 ## Results
 
-| Metric | Random Policy | PPO (500k steps) | PPO (1M steps) |
-|---|:---:|:---:|:---:|
-| Success Rate | ~2% | ~55% | **~82%** |
-| Mean Steps to Goal | — | 218 | **142** |
-| Mean Final Distance | 4.8m | 1.4m | **0.6m** |
+| Metric | Random Policy | PPO (1M steps) |
+|---|:---:|:---:|
+| Success Rate | ~2% | **100%** |
+| Mean Steps to Goal | — | **33** |
+| Mean Final Distance | ~4.8m | **0.45m** |
+| Mean Episode Reward | — | **13.3 ± 3.9** |
 
-> *Evaluated on 50 episodes, 4 random obstacles, 10×10m room.*
-> *Train your own — numbers will vary by seed.*
+> *Evaluated on 20 episodes, 4 random obstacles, 10×10m room, CPU-only training (~14 min).*
 
 ---
 

@@ -33,12 +33,8 @@ class EpisodeMetricsCallback(BaseCallback):
         # SB3 stores infos in self.locals["infos"] after each env step
         for info in self.locals.get("infos", []):
             if "episode" in info:
-                # Auto-wrapped by Monitor: episode reward + length
                 self._episode_lengths.append(info["episode"]["l"])
-
-            # Our custom per-episode info keys
-            if "success" in info and info.get("episode_length"):
-                self._successes.append(float(info["success"]))
+                self._successes.append(float(info.get("success", False)))
                 self._distances.append(float(info.get("distance", 0.0)))
 
         return True

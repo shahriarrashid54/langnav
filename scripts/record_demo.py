@@ -240,10 +240,11 @@ def main():
     # ── Save MP4 ──────────────────────────────────────────────────────────
     mp4_path = os.path.join(args.output_dir, "demo_best.mp4")
     try:
-        imageio.mimsave(mp4_path, best_frames, fps=args.fps, codec="libx264")
+        import imageio.v3 as iio
+        iio.imwrite(mp4_path, best_frames, fps=args.fps, codec="libx264")
         print(f"Saved best episode MP4: {mp4_path}")
     except Exception as e:
-        print(f"MP4 skipped (install imageio[ffmpeg]): {e}")
+        print(f"MP4 skipped (install imageio[ffmpeg] or imageio[pyav]): {e}")
 
     # ── Random vs trained comparison ──────────────────────────────────────
     if not args.no_compare:
@@ -262,18 +263,18 @@ def main():
     # ── Save metrics JSON ─────────────────────────────────────────────────
     json_path = os.path.join(args.output_dir, "eval_results.json")
     with open(json_path, "w") as f:
-        json.dump(metrics, f, indent=2)
+        json.dump(metrics, f, indent=2, default=lambda x: float(x))
 
     # ── Print summary ─────────────────────────────────────────────────────
-    print("\n" + "═" * 50)
+    print("\n" + "=" * 50)
     print("EVALUATION SUMMARY")
-    print("═" * 50)
+    print("=" * 50)
     print(f"  Episodes:      {metrics['n_episodes']}")
     print(f"  Success Rate:  {metrics['success_rate']:.1%}")
     print(f"  Mean Reward:   {metrics['mean_reward']:.2f} ± {metrics['std_reward']:.2f}")
     print(f"  Mean Distance: {metrics['mean_distance']:.2f} m")
     print(f"  Mean Steps:    {metrics['mean_steps']:.0f}")
-    print("═" * 50)
+    print("=" * 50)
     print(f"\nOutputs written to: {args.output_dir}/")
 
     renderer.close()

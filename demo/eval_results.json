@@ -1,0 +1,9 @@
+{
+  "n_episodes": 20,
+  "success_rate": 1.0,
+  "mean_reward": 13.348274230957031,
+  "std_reward": 3.9330759048461914,
+  "mean_distance": 0.44549211859703064,
+  "mean_steps": 33.4,
+  "best_reward": 20.02199935913086
+}
